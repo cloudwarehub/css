@@ -19,13 +19,38 @@ type Uconn struct {
 	runch   chan int
 }
 
+/*
+wait until auth success
+if auth failed, it will be wakeup and exit
+*/
+func (uconn *Uconn) recv() {
+    <-uconn.runch
+	if uconn.authed == 0 { //auth failed, exit recv goroutine
+		return
+	}
+	ws := uconn.ws
+	for {
+		mt, message, err := ws.ReadMessage()
+		if err != nil {
+			log.Println("read:", err)
+			break
+		}
+		uconn.handlemsg(mt, message)
+		err = ws.WriteMessage(mt, message)
+		if err != nil {
+			log.Println("write:", err)
+			break
+		}
+	}
+}
+
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true
 	},
 }
 
-func auth(uconn *Uconn) {
+func (uconn *Uconn) auth() {
 	resp, err := http.Get("http://api.cloudwarehub.com/user?token=" + uconn.token)
 	if err != nil {
 		fmt.Println("api access error")
@@ -52,29 +77,6 @@ func auth(uconn *Uconn) {
 	uconn.runch <- 1
 }
 
-func recv(uconn *Uconn) {
-	/*
-	   wait until auch success
-	*/
-	<-uconn.runch
-	if uconn.authed == 0 { //auth failed, exit recv goroutine
-		return
-	}
-	ws := uconn.ws
-	for {
-		mt, message, err := ws.ReadMessage()
-		if err != nil {
-			log.Println("read:", err)
-			break
-		}
-		log.Printf("recv: %s", message)
-		err = ws.WriteMessage(mt, message)
-		if err != nil {
-			log.Println("write:", err)
-			break
-		}
-	}
-}
 
 /*
 To achieve none-blocking connect:
@@ -106,8 +108,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	token := queryForm["token"][0]
 	uconn := &Uconn{ws: ws, token: token, authed: 0, runch: make(chan int)}
-	go auth(uconn)
-	go recv(uconn)
+	go uconn.auth()
+	go uconn.recv()
 }
 
 func main() {
