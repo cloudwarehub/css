@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"github.com/bitly/go-simplejson"
+	"github.com/cloudwarehub/webftp-go"
 	"github.com/gorilla/websocket"
 	"io/ioutil"
 	"log"
@@ -19,12 +21,93 @@ type Uconn struct {
 	runch   chan int
 }
 
+var api = "http://api.cloudwarehub.com"
+
+func apivisit(urlstring string, method string, token string, data map[string]string) ([]byte, error) {
+	client := &http.Client{}
+	var req *http.Request
+	var err error
+	if method == "GET" {
+		u, err := url.Parse(urlstring)
+		if err != nil {
+			log.Println(err)
+			return nil, err
+		}
+		q := u.Query()
+		for key, value := range data {
+			q.Set(key, value)
+		}
+		u.RawQuery = q.Encode()
+		req, err = http.NewRequest("GET", u.String(), nil)
+	}
+
+	if method == "POST" {
+		d := url.Values{}
+		for key, value := range data {
+			d.Set(key, value)
+		}
+		req, err = http.NewRequest("POST", urlstring, bytes.NewBufferString(d.Encode()))
+	}
+
+	req.Header.Add("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	return body, nil
+}
+
+func (uconn *Uconn) handlemsg(mt int, message []byte) error {
+	if mt == websocket.TextMessage { //commmand message
+		obj, err := simplejson.NewJson(message)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+		cmd := webftp.Cmd{S: obj.Get("S").MustInt(), C: obj.Get("C").MustString(), P: obj.Get("P").MustMap()}
+		switch cmd.C {
+		case "ls":
+			query := map[string]string{
+				"dir_id": cmd.P["dir_id"].(string),
+			}
+			resp, err := apivisit(api+"/file/ls", "GET", uconn.token, query)
+			if err != nil {
+				log.Println(err)
+			}
+			uconn.ws.WriteMessage(websocket.TextMessage, resp)
+		case "mkdir":
+			query := map[string]string{
+				"name": cmd.P["name"].(string),
+				"dir_id": cmd.P["dir_id"].(string),
+			}
+			resp, err := apivisit(api+"/file/mkdir", "POST", uconn.token, query)
+			if err != nil {
+				log.Println(err)
+			}
+			uconn.ws.WriteMessage(websocket.TextMessage, resp)
+		case "write":
+			/* key format: user_id:piece_id:offset */
+			key_prefix := uconn.user_id + ":" + cmd.P["id"] + ":"
+			offset := cmd.P["offset"].(int64)
+			size := cmd.P["size"].(int64)
+			piece_offset := 0
+
+		}
+	}
+	return nil
+}
+
 /*
 wait until auth success
 if auth failed, it will be wakeup and exit
 */
 func (uconn *Uconn) recv() {
-    <-uconn.runch
+	<-uconn.runch
 	if uconn.authed == 0 { //auth failed, exit recv goroutine
 		return
 	}
@@ -35,12 +118,8 @@ func (uconn *Uconn) recv() {
 			log.Println("read:", err)
 			break
 		}
-		uconn.handlemsg(mt, message)
-		err = ws.WriteMessage(mt, message)
-		if err != nil {
-			log.Println("write:", err)
-			break
-		}
+		go uconn.handlemsg(mt, message)
+
 	}
 }
 
@@ -76,7 +155,6 @@ func (uconn *Uconn) auth() {
 	uconn.authed = 1
 	uconn.runch <- 1
 }
-
 
 /*
 To achieve none-blocking connect:
