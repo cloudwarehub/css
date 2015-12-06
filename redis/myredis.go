@@ -1,4 +1,4 @@
-package cacheredis
+package myredis
 
 import (
     "fmt"
@@ -10,17 +10,17 @@ type MyRedis struct{
 }
 
 
-func (myredis *MyRedis) GetValue(file_id string) (interface{}, error) {
-	v, err := myredis.conn.Do("GET", file_id)
+func (red *MyRedis) GetValue(file_id string) (interface{}, error) {
+	v, err := red.conn.Do("GET", file_id)
     if err != nil {
     	fmt.Println(err)
-        return nil, nil
+        return nil, err
     }
 	return v, err
 }
 
-func (myredis *MyRedis) SetValue(file_id string, data []byte) (interface{}, error) {
-    v, err := myredis.conn.Do("SET", file_id, data)
+func (red *MyRedis) SetValue(file_id string, data []byte) (interface{}, error) {
+    v, err := red.conn.Do("SET", file_id, data)
     return v, err
 }
 
