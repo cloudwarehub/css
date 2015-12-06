@@ -1,44 +1,44 @@
-package redis
+package cacheredis
 
-import {
+import (
     "fmt"
     "github.com/garyburd/redigo/redis"
-}
+)
 
 type MyRedis struct{
-    rconn *redis.conn
+    conn redis.Conn
 }
 
-func (redis *MyRedis) GetValue(file_id string) ([]byte, err) {
-    v, err = redis.String(c.Do("GET", string))
+
+func (myredis *MyRedis) GetValue(file_id string) (interface{}, error) {
+	v, err := myredis.conn.Do("GET", file_id)
     if err != nil {
-    fmt.Println(err)
-        return
+    	fmt.Println(err)
+        return nil, nil
     }
-    fmt.Println(v)
+	return v, err
 }
 
-func (redis *MyRedis) SetValue(file_id string, data []byte) (err) {
-    v, err := redis.rconn.Do("SET", string, data)
-    return err
+func (myredis *MyRedis) SetValue(file_id string, data []byte) (interface{}, error) {
+    v, err := myredis.conn.Do("SET", file_id, data)
+    return v, err
 }
 
+/*
 func main() {
+	// for test
     c, err := redis.Dial("tcp", "10.10.168.190:6379")
-    conn := MyRedis(c)
+    conn := MyRedis{c}
     if err != nil {
     fmt.Println(err)
         return
-    }
-    
-    str := "123"
+    }else{
+		fmt.Println("conncet success")
+	}
+	str := "123"
     b1 := []byte(str)
-    err := conn.SetValue("zkdnfcf1", b1)
-    if err != nil {
-        fmt.Println(err)
-        return
-    }
-    
+ 	conn.SetValue("zkdnfcf1", b1)
+
     data, err := conn.GetValue("zkdnfcf1")
     if err != nil {
         fmt.Println(err)
@@ -46,5 +46,6 @@ func main() {
     }else {
         fmt.Println(data)
     }
+
     defer c.Close()
-}
+}*/
