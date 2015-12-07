@@ -6,21 +6,21 @@ import (
 )
 
 type MyRedis struct{
-    conn redis.Conn
+    Conn redis.Conn
 }
 
 
 func (red *MyRedis) GetValue(file_id string) (interface{}, error) {
-	v, err := red.conn.Do("GET", file_id)
+	v, err := red.Conn.Do("GET", file_id)
     if err != nil {
     	fmt.Println(err)
         return nil, err
     }
-	return v, err
+	return v, nil
 }
 
 func (red *MyRedis) SetValue(file_id string, data []byte) (interface{}, error) {
-    v, err := red.conn.Do("SET", file_id, data)
+    v, err := red.Conn.Do("SET", file_id, data)
     return v, err
 }
 
