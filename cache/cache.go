@@ -1,14 +1,33 @@
 package cache
 
 import (
+	"fmt"
     "github.com/cloudwarehub/css/ufile"
     "github.com/cloudwarehub/css/redis"
+	"github.com/garyburd/redigo/redis"
 )
 
 
 type Cache struct{
     FileRedis myredis.MyRedis
     Context ufile.Context
+}
+
+func (cache *Cache) Init(host_port string, 	privateKey string, publicKey string, bucket string){
+	c, err := redis.Dial("tcp", host_port)
+	myredis := myredis.MyRedis{c}
+	if err != nil {
+		fmt.Println(err)
+		return
+	}else{
+		fmt.Println("conncet success")
+	}
+	context := ufile.Context{
+		PublicKey : publicKey,
+		PrivateKey : privateKey,
+		Bucket : bucket}
+	cache.FileRedis = myredis
+	cache.Context = context
 }
 
 func (cache *Cache) Get(file_id string) (interface{}, error) {
@@ -36,21 +55,13 @@ func (cache *Cache) Set(file_id string, data []byte) ([]byte, error) {
 }
 
 /*
-************* use like this
 func main() {
- 	c, err := redis.Dial("tcp", "10.10.168.190:6379") 
-	conn := myredis.MyRedis{c}
-	if err != nil {
-		fmt.Println(err)
-		return
-	}else{
-		fmt.Println("conncet success")
-	}
-	context := ufile.Context{
-			PublicKey : "ucloud1135032732@qq.com14476426960001214118939",
-			PrivateKey : "b04362de5f4a1d16cdc4c00a33141a52c395aa61",
-			Bucket : "zkdnfcf"}
-	cache := Cache{conn, context}
+	publicKey := "ucloud1135032732@qq.com14476426960001214118939"
+	privateKey := "b04362de5f4a1d16cdc4c00a33141a52c395aa61"
+	bucket := "zkdnfcf"
+	host_port := "10.10.168.190:6379"
+	cache := Cache{}
+	cache.Init(host_port, privateKey, publicKey, bucket)
 	data, err := cache.Get("test")	
 	if err != nil {
 		fmt.Println(err)
@@ -58,10 +69,9 @@ func main() {
 		fmt.Println(data)
 	}
 
-	s1 := "testtesttest1111"
+	s1 := "testtesttest111122"
 	b1 := []byte(s1)
 	data1, err1 := cache.Set("test", b1)
 	fmt.Println(data1, err1)
-	defer c.Close()
-}
-*/
+	defer cache.FileRedis.Conn.Close()
+}*/
