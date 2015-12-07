@@ -2,16 +2,21 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"github.com/bitly/go-simplejson"
+	"github.com/cloudwarehub/css/cache"
 	"github.com/cloudwarehub/webftp-go"
 	"github.com/gorilla/websocket"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 )
+
+var Piecesize = 131072
 
 type Uconn struct {
 	ws      *websocket.Conn
@@ -21,7 +26,15 @@ type Uconn struct {
 	runch   chan int
 }
 
+type piece_t struct {
+	offset          int
+	index           int
+	overwrite_start int
+	overwrite_size  int
+}
+
 var api = "http://api.cloudwarehub.com"
+var csscache cache.Cache
 
 func apivisit(urlstring string, method string, token string, data map[string]string) ([]byte, error) {
 	client := &http.Client{}
@@ -62,6 +75,28 @@ func apivisit(urlstring string, method string, token string, data map[string]str
 	return body, nil
 }
 
+func make_pieces(offset int, size int) []piece_t {
+	s := ((offset + size) / Piecesize) - (offset / Piecesize) + 1
+	var pieces = make([]piece_t, s)
+	start_offset := offset / Piecesize
+	for idx, _ := range pieces {
+		pieces[idx].offset = start_offset + Piecesize*idx
+		pieces[idx].index = pieces[idx].offset / Piecesize
+		pieces[idx].overwrite_start = 0
+		pieces[idx].overwrite_size = Piecesize
+	}
+
+	pieces[0].overwrite_start = offset % Piecesize
+	if s == 1 {
+		pieces[0].overwrite_size = size
+	} else {
+		pieces[0].overwrite_size = Piecesize - pieces[0].overwrite_start
+		pieces[len(pieces)-1].overwrite_size = (offset + size) % Piecesize
+	}
+
+	return pieces
+}
+
 func (uconn *Uconn) handlemsg(mt int, message []byte) error {
 	if mt == websocket.TextMessage { //commmand message
 		obj, err := simplejson.NewJson(message)
@@ -82,7 +117,7 @@ func (uconn *Uconn) handlemsg(mt int, message []byte) error {
 			uconn.ws.WriteMessage(websocket.TextMessage, resp)
 		case "mkdir":
 			query := map[string]string{
-				"name": cmd.P["name"].(string),
+				"name":   cmd.P["name"].(string),
 				"dir_id": cmd.P["dir_id"].(string),
 			}
 			resp, err := apivisit(api+"/file/mkdir", "POST", uconn.token, query)
@@ -91,12 +126,20 @@ func (uconn *Uconn) handlemsg(mt int, message []byte) error {
 			}
 			uconn.ws.WriteMessage(websocket.TextMessage, resp)
 		case "write":
+			data, err := base64.StdEncoding.DecodeString(cmd.P["data"].(string))
+			if err != nil {
+				log.Println(err)
+				return err
+			}
 			/* key format: user_id:piece_id:offset */
-			key_prefix := uconn.user_id + ":" + cmd.P["id"] + ":"
-			offset := cmd.P["offset"].(int64)
-			size := cmd.P["size"].(int64)
-			piece_offset := 0
+			key_prefix := uconn.user_id + ":" + cmd.P["id"].(string) + ":"
+			offset := cmd.P["offset"].(int)
+			size := cmd.P["size"].(int)
 
+			pieces := make_pieces(offset, size)
+			for _, value := range pieces {
+				csscache.Set(key_prefix+strconv.Itoa(value.index), data)
+			}
 		}
 	}
 	return nil

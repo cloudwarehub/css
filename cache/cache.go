@@ -1,10 +1,8 @@
 package cache
 
 import (
-    "fmt"
-    "github.com/garyburd/redigo/redis"
-    "github.com/cloudwarehub/css/redis"
     "github.com/cloudwarehub/css/ufile"
+    "github.com/cloudwarehub/css/redis"
 )
 
 
