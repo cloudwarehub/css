@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sync"
 	"strconv"
 )
 
@@ -27,10 +28,12 @@ type Uconn struct {
 }
 
 type piece_t struct {
+	key	string
 	offset          int
 	index           int
 	overwrite_start int
 	overwrite_size  int
+	data []byte
 }
 
 var api = "http://api.cloudwarehub.com"
@@ -84,6 +87,7 @@ func make_pieces(offset int, size int) []piece_t {
 		pieces[idx].index = pieces[idx].offset / Piecesize
 		pieces[idx].overwrite_start = 0
 		pieces[idx].overwrite_size = Piecesize
+		pieces[idx].data = make([]byte, Piecesize)
 	}
 
 	pieces[0].overwrite_start = offset % Piecesize
@@ -137,9 +141,28 @@ func (uconn *Uconn) handlemsg(mt int, message []byte) error {
 			size := cmd.P["size"].(int)
 
 			pieces := make_pieces(offset, size)
-			for _, value := range pieces {
-				csscache.Set(key_prefix+strconv.Itoa(value.index), data)
+			var wg sync.WaitGroup
+			var copyptr = 0
+			for idx, value := range pieces {
+				wg.Add(1)
+				pieces[idx].key = key_prefix+strconv.Itoa(value.index)
+				if value.overwrite_start != 0 || (value.overwrite_start + value.overwrite_size) < Piecesize {
+					dt, err := csscache.Get(pieces[idx].key)
+					if err != nil {
+						log.Println(err)
+						return err
+					}
+					pieces[idx].data = dt.([]byte)
+				}
+				copy(pieces[idx].data[value.overwrite_start:value.overwrite_start+value.overwrite_size], data[copyptr:copyptr+value.overwrite_size])
+				copyptr += value.overwrite_size
+				go func(key string, data []byte) {
+                    defer wg.Done()
+					csscache.Set(key, data)
+                }(pieces[idx].key, pieces[idx].data)
 			}
+			wg.Wait()
+			uconn.ws.WriteJSON(map[string]interface{}{"code": 0, "seq": cmd.P["seq"].(string), "data": "write success"})
 		}
 	}
 	return nil
@@ -234,6 +257,10 @@ func handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	csscache, err := Init(host_port, privateKey, publicKey, bucket)
+	if err != nil {
+		fmt.Println(err)
+	}
 	var addr = flag.String("port", ":12345", "websocket server port")
 	http.HandleFunc("/", handler)
 	http.ListenAndServe(*addr, nil)
