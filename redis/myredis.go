@@ -11,6 +11,7 @@ type MyRedis struct{
 
 
 func (red *MyRedis) GetValue(file_id string) (interface{}, error) {
+    file_id = "123"
 	v, err := red.Conn.Do("GET", file_id)
     if err != nil {
     	fmt.Println(err)

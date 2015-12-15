@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/base64"
 	"flag"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 	"net/url"
 	"sync"
 	"strconv"
+	
 )
 
 var Piecesize = 131072
@@ -58,11 +58,17 @@ func apivisit(urlstring string, method string, token string, data map[string]str
 	}
 
 	if method == "POST" {
-		d := url.Values{}
-		for key, value := range data {
-			d.Set(key, value)
+		u, err := url.Parse(urlstring)
+		if err != nil {
+			log.Println(err)
+			return nil, err
 		}
-		req, err = http.NewRequest("POST", urlstring, bytes.NewBufferString(d.Encode()))
+		q := u.Query()
+		for key, value := range data {
+			q.Set(key, value)
+		}
+		u.RawQuery = q.Encode()
+		req, err = http.NewRequest("POST", u.String(), nil)
 	}
 
 	req.Header.Add("Authorization", "Bearer "+token)
@@ -108,9 +114,10 @@ func (uconn *Uconn) handlemsg(mt int, message []byte) error {
 			log.Println(err)
 			return err
 		}
-		cmd := webftp.Cmd{S: obj.Get("S").MustInt(), C: obj.Get("C").MustString(), P: obj.Get("P").MustMap()}
+		cmd := webftp.Cmd{S: obj.Get("seq").MustInt(), C: obj.Get("cmd").MustString(), P: obj.Get("param").MustMap()}
 		switch cmd.C {
 		case "ls":
+			fmt.Println("ls")
 			query := map[string]string{
 				"dir_id": cmd.P["dir_id"].(string),
 			}
@@ -118,7 +125,11 @@ func (uconn *Uconn) handlemsg(mt int, message []byte) error {
 			if err != nil {
 				log.Println(err)
 			}
-			uconn.ws.WriteMessage(websocket.TextMessage, resp)
+			resp_json, _ := simplejson.NewJson(resp)
+			resp_json.Set("seq", cmd.S)
+			str, _ := resp_json.Encode()
+			fmt.Printf("%s\n", str)
+			uconn.ws.WriteMessage(websocket.TextMessage, str)
 		case "mkdir":
 			query := map[string]string{
 				"name":   cmd.P["name"].(string),
@@ -128,7 +139,39 @@ func (uconn *Uconn) handlemsg(mt int, message []byte) error {
 			if err != nil {
 				log.Println(err)
 			}
-			uconn.ws.WriteMessage(websocket.TextMessage, resp)
+			fmt.Printf("%s\n", resp)
+			resp_json, _ := simplejson.NewJson(resp)
+			resp_json.Set("seq", cmd.S)
+			str, _ := resp_json.Encode()
+			uconn.ws.WriteMessage(websocket.TextMessage, str)
+		case "mknod":
+			query := map[string]string{
+				"name":   cmd.P["name"].(string),
+				"dir_id": cmd.P["dir_id"].(string),
+			}
+			resp, err := apivisit(api+"/file/mknod", "POST", uconn.token, query)
+			if err != nil {
+				log.Println(err)
+			}
+			fmt.Printf("%s\n", resp)
+			resp_json, _ := simplejson.NewJson(resp)
+			resp_json.Set("seq", cmd.S)
+			str, _ := resp_json.Encode()
+			uconn.ws.WriteMessage(websocket.TextMessage, str)
+		case "lookup":
+			query := map[string]string{
+				"name":   cmd.P["name"].(string),
+				"dir_id": cmd.P["dir_id"].(string),
+			}
+			resp, err := apivisit(api+"/file/lookup", "GET", uconn.token, query)
+			if err != nil {
+				log.Println(err)
+			}
+			fmt.Printf("%s\n", resp)
+			resp_json, _ := simplejson.NewJson(resp)
+			resp_json.Set("seq", cmd.S)
+			str, _ := resp_json.Encode()
+			uconn.ws.WriteMessage(websocket.TextMessage, str)
 		case "write":
 			data, err := base64.StdEncoding.DecodeString(cmd.P["data"].(string))
 			if err != nil {
@@ -137,8 +180,8 @@ func (uconn *Uconn) handlemsg(mt int, message []byte) error {
 			}
 			/* key format: user_id:piece_id:offset */
 			key_prefix := uconn.user_id + ":" + cmd.P["id"].(string) + ":"
-			offset := cmd.P["offset"].(int)
-			size := cmd.P["size"].(int)
+			offset, _ := obj.Get("data").Get("offset").Int()
+			size, _ := obj.Get("data").Get("size").Int()
 
 			pieces := make_pieces(offset, size)
 			var wg sync.WaitGroup
@@ -152,7 +195,9 @@ func (uconn *Uconn) handlemsg(mt int, message []byte) error {
 						log.Println(err)
 						return err
 					}
-					pieces[idx].data = dt.([]byte)
+					if (len(dt.([]byte)) >= Piecesize) { //ucloud文件不存在会返回错误字符串
+						pieces[idx].data = dt.([]byte)
+					}
 				}
 				copy(pieces[idx].data[value.overwrite_start:value.overwrite_start+value.overwrite_size], data[copyptr:copyptr+value.overwrite_size])
 				copyptr += value.overwrite_size
@@ -162,8 +207,76 @@ func (uconn *Uconn) handlemsg(mt int, message []byte) error {
                 }(pieces[idx].key, pieces[idx].data)
 			}
 			wg.Wait()
-			uconn.ws.WriteJSON(map[string]interface{}{"code": 0, "seq": cmd.P["seq"].(string), "data": "write success"})
+			
+			resp_json := simplejson.New()
+			resp_json.Set("code", 0)
+			resp_json.Set("seq", cmd.S)
+			resp_json.Set("data", "")
+			str, _ := resp_json.Encode()
+			uconn.ws.WriteMessage(websocket.TextMessage, str)
+			//uconn.ws.WriteJSON(map[string]interface{}{"code": 0, "seq": cmd.P["seq"].(string), "data": "write success"})
+		case "read":
+			key_prefix := uconn.user_id + ":" + cmd.P["id"].(string) + ":"
+			offset, _ := obj.Get("data").Get("offset").Int()
+			size, _ := obj.Get("data").Get("size").Int()
+
+			pieces := make_pieces(offset, size)
+			var wg sync.WaitGroup
+			var tmpbuf = make([]byte, len(pieces) * Piecesize)
+			for idx, value := range pieces {
+				wg.Add(1)
+				pieces[idx].key = key_prefix+strconv.Itoa(value.index)
+				if value.overwrite_start != 0 || (value.overwrite_start + value.overwrite_size) < Piecesize {
+					dt, err := csscache.Get(pieces[idx].key)
+					if err != nil {
+						log.Println(err)
+						return err
+					}
+					if (len(dt.([]byte)) >= Piecesize) { //ucloud文件不存在会返回错误字符串
+						pieces[idx].data = dt.([]byte)
+					}
+					
+				}
+				//copy(pieces[idx].data[value.overwrite_start:value.overwrite_start+value.overwrite_size], data[copyptr:copyptr+value.overwrite_size])
+				go func(key string, data []byte) {
+                    defer wg.Done()
+					bf, _ := csscache.Get(key)
+					copy(pieces[idx].data, bf.([]byte))
+                }(pieces[idx].key, pieces[idx].data)
+			}
+			wg.Wait()
+			for idx, _ := range pieces {
+				copy(tmpbuf[idx*Piecesize:idx*Piecesize+Piecesize], pieces[idx].data)
+			}
+			off, _ := obj.Get("data").Get("offset").Int()
+			off = off % Piecesize
+			sz, _ := obj.Get("data").Get("size").Int()
+			var outbuf = tmpbuf[off:off + sz]
+			outstr := base64.StdEncoding.EncodeToString(outbuf)
+			
+			resp_json := simplejson.New()
+			resp_json.Set("code", 0)
+			resp_json.Set("seq", cmd.S)
+			resp_json.Set("data", outstr)
+			str, _ := resp_json.Encode()
+			uconn.ws.WriteMessage(websocket.TextMessage, str)
+			//uconn.ws.WriteJSON(map[string]interface{}{"code": 0, "seq": cmd.P["seq"].(string), "data": outstr})
+		case "getattr":
+			query := map[string]string{
+				"id": cmd.P["id"].(string),
+			}
+			resp, err := apivisit(api+"/file/getattr", "GET", uconn.token, query)
+			if err != nil {
+				log.Println(err)
+			}
+			fmt.Println(resp)
+			resp_json, _ := simplejson.NewJson(resp)
+			resp_json.Set("seq", cmd.S)
+			str, _ := resp_json.Encode()
+			uconn.ws.WriteMessage(websocket.TextMessage, str)
+			
 		}
+		
 	}
 	return nil
 }
@@ -184,6 +297,7 @@ func (uconn *Uconn) recv() {
 			log.Println("read:", err)
 			break
 		}
+		fmt.Printf("%s\n", message)
 		go uconn.handlemsg(mt, message)
 
 	}
@@ -193,6 +307,8 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true
 	},
+	WriteBufferSize: 1024*1024,
+	ReadBufferSize: 1024*1024,
 }
 
 func (uconn *Uconn) auth() {
@@ -257,10 +373,13 @@ func handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	csscache, err := Init(host_port, privateKey, publicKey, bucket)
+	var err error
+	csscache, err = cache.Init("10.10.168.190:6379", "34a61e78e28f2320accf45694e2a93fdfb0786dc", "ucloudgd@tongjo.com1352889883743073806", "cloudwarehub")
 	if err != nil {
 		fmt.Println(err)
 	}
+	
+	fmt.Println("starting ws server")
 	var addr = flag.String("port", ":12345", "websocket server port")
 	http.HandleFunc("/", handler)
 	http.ListenAndServe(*addr, nil)

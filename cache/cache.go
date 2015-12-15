@@ -4,6 +4,7 @@ import (
     "github.com/cloudwarehub/css/ufile"
     "github.com/cloudwarehub/css/redis"
 	"github.com/garyburd/redigo/redis"
+	"fmt"
 )
 
 
@@ -29,6 +30,7 @@ func Init(host_port string, privateKey string, publicKey string, bucket string) 
 }
 
 func (cache *Cache) Get(file_id string) (interface{}, error) {
+	fmt.Println(file_id)
     v, err := cache.FileRedis.GetValue(file_id)
     if v == nil || err != nil{
         //从ufile里获取，然后存入缓存
